@@ -1,0 +1,211 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yoi AI Timeclock</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.7.7/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.0/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    console.log('Script loaded'); // Debug: Confirm script execution
+
+    const { useState, useEffect } = React;
+
+    // Error Boundary Component
+    class ErrorBoundary extends React.Component {
+      state = { error: null };
+      static getDerivedStateFromError(error) {
+        return { error: error.message };
+      }
+      render() {
+        if (this.state.error) {
+          return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-100">
+              <div className="bg-white p-8 rounded shadow-md">
+                <h1 className="text-2xl font-bold text-red-600">Error</h1>
+                <p>{this.state.error}</p>
+              </div>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    // Main App Component
+    const App = () => {
+      const [user, setUser] = useState(null);
+      console.log('App rendered', { user }); // Debug: Track rendering
+
+      useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (token) {
+          // Mock user for demo (replace with API call)
+          setUser({ pin: '1234', role: 'employee' });
+        }
+      }, []);
+
+      return (
+        <ErrorBoundary>
+          <div>
+            {user ? <EmployeeDashboard user={user} setUser={setUser} /> : <PinLogin setUser={setUser} />}
+          </div>
+        </ErrorBoundary>
+      );
+    };
+
+    // PIN Login Component
+    const PinLogin = ({ setUser }) => {
+      const [pin, setPin] = useState('');
+      const [error, setError] = useState('');
+
+      const handleLogin = (e) => {
+        e.preventDefault();
+        setError('');
+        if (!/^\d{4,6}$/.test(pin)) {
+          setError('PIN must be 4-6 digits');
+          return;
+        }
+        try {
+          // Mock API call to /api/auth/login
+          const role = pin.startsWith('9') ? 'hr' : 'employee';
+          const mockResponse = { token: 'mock-token-' + pin, user: { pin, role } };
+          localStorage.setItem('token', mockResponse.token);
+          setUser(mockResponse.user);
+        } catch (err) {
+          setError('Login failed: ' + err.message);
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-100">
+          <div className="bg-white p-8 rounded shadow-md w-full max-w-md">
+            <h1 className="text-2xl font-bold mb-6 text-center">Yoi AI Timeclock</h1>
+            <form onSubmit={handleLogin}>
+              <div className="mb-4">
+                <label className="block text-gray-700">Enter PIN</label>
+                <input
+                  type="text"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                  className="w-full p-2 border rounded"
+                  placeholder="4-6 digit PIN"
+                  maxLength="6"
+                  required
+                />
+                {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+              >
+                Login
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    };
+
+    // Employee Dashboard Component
+    const EmployeeDashboard = ({ user, setUser }) => {
+      const [punches, setPunches] = useState([]);
+
+      const handlePunch = () => {
+        const newPunch = { id: Date.now(), time: new Date().toLocaleString(), type: 'in' };
+        setPunches([...punches, newPunch]);
+      };
+
+      const handleLogout = () => {
+        localStorage.removeItem('token');
+        setUser(null);
+      };
+
+      useEffect(() => {
+        // Mock data (replace with /api/timeclock)
+        setPunches([{ id: 1, time: '2025-06-24 09:00', type: 'in' }]);
+      }, []);
+
+      return (
+        <div className="min-h-screen bg-gray-100 p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold">Employee Dashboard</h1>
+            <button
+              onClick={handleLogout}
+              className="bg-red-500 text-white p-2 rounded"
+            >
+              Logout
+            </button>
+          </div>
+          <div className="bg-white p-4 rounded shadow">
+            <h2 className="text-xl font-semibold mb-2">Timeclock</h2>
+            <button
+              onClick={handlePunch}
+              className="bg-green-500 text-white p-2 rounded"
+            >
+              Punch In/Out
+            </button>
+            <h3 className="mt-4 font-semibold">Recent Punches</h3>
+            <ul>
+              {punches.map((punch) => (
+                <li key={punch.id}>
+                  {punch.time} - {punch.type}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      );
+    };
+
+    // Render App
+    console.log('Rendering App'); // Debug: Confirm render attempt
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
