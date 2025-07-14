@@ -85,15 +85,34 @@
       useEffect(() => {
         const token = localStorage.getItem('token');
         if (token) {
-          // Mock user for demo (replace with API call)
-          setUser({ pin: '1234', role: 'employee' });
+          // Fetch user info with stored token
+          axios
+            .get('/api/timeclock', {
+              headers: { Authorization: 'Bearer ' + token },
+            })
+            .then(() => {
+              // Assume token is the PIN for demo
+              const role = token.startsWith('9') ? 'hr' : 'employee';
+              setUser({ pin: token, role });
+            })
+            .catch(() => {
+              localStorage.removeItem('token');
+            });
         }
       }, []);
 
       return (
         <ErrorBoundary>
           <div>
-            {user ? <EmployeeDashboard user={user} setUser={setUser} /> : <PinLogin setUser={setUser} />}
+            {user ? (
+              user.role === 'hr' ? (
+                <ManagerDashboard user={user} setUser={setUser} />
+              ) : (
+                <EmployeeDashboard user={user} setUser={setUser} />
+              )
+            ) : (
+              <PinLogin setUser={setUser} />
+            )}
           </div>
         </ErrorBoundary>
       );
@@ -111,15 +130,15 @@
           setError('PIN must be 4-6 digits');
           return;
         }
-        try {
-          // Mock API call to /api/auth/login
-          const role = pin.startsWith('9') ? 'hr' : 'employee';
-          const mockResponse = { token: 'mock-token-' + pin, user: { pin, role } };
-          localStorage.setItem('token', mockResponse.token);
-          setUser(mockResponse.user);
-        } catch (err) {
-          setError('Login failed: ' + err.message);
-        }
+        axios
+          .post('/api/auth/login', { pin })
+          .then((res) => {
+            localStorage.setItem('token', res.data.token);
+            setUser(res.data.user);
+          })
+          .catch((err) => {
+            setError('Login failed: ' + (err.response?.data?.error || err.message));
+          });
       };
 
       return (
@@ -155,10 +174,66 @@
     // Employee Dashboard Component
     const EmployeeDashboard = ({ user, setUser }) => {
       const [punches, setPunches] = useState([]);
+      const [start, setStart] = useState('');
+      const [end, setEnd] = useState('');
+      const [pto, setPto] = useState([]);
+      const [taskInput, setTaskInput] = useState('');
+      const [tasks, setTasks] = useState([]);
+      const [training, setTraining] = useState([]);
 
       const handlePunch = () => {
-        const newPunch = { id: Date.now(), time: new Date().toLocaleString(), type: 'in' };
-        setPunches([...punches, newPunch]);
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        axios
+          .post(
+            '/api/timeclock/punch',
+            {},
+            { headers: { Authorization: 'Bearer ' + token } }
+          )
+          .then((res) => {
+            setPunches([...punches, { ...res.data, time: new Date(res.data.time).toLocaleString() }]);
+        });
+      };
+
+      const handleRequest = () => {
+        const token = localStorage.getItem('token');
+        if (!token || !start || !end) return;
+        axios
+          .post(
+            '/api/pto',
+            { start, end },
+            { headers: { Authorization: 'Bearer ' + token } }
+          )
+          .then((res) => {
+            setPto([...pto, res.data]);
+            setStart('');
+            setEnd('');
+          });
+      };
+
+      const handleTaskSwitch = () => {
+        const token = localStorage.getItem('token');
+        if (!token || !taskInput) return;
+        axios
+          .post(
+            '/api/tasks',
+            { task: taskInput },
+            { headers: { Authorization: 'Bearer ' + token } }
+          )
+          .then((res) => {
+            setTasks([...tasks, { ...res.data, time: new Date(res.data.time).toLocaleString() }]);
+            setTaskInput('');
+          });
+      };
+
+      const completeTraining = (id) => {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        axios
+          .post(`/api/training/${id}/complete`, {}, { headers: { Authorization: 'Bearer ' + token } })
+          .then(() => {
+            setTraining(training.map((m) => (m.id === id ? { ...m, completed: true } : m)));
+          });
       };
 
       const handleLogout = () => {
@@ -167,8 +242,28 @@
       };
 
       useEffect(() => {
-        // Mock data (replace with /api/timeclock)
-        setPunches([{ id: 1, time: '2025-06-24 09:00', type: 'in' }]);
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        axios
+          .get('/api/timeclock', {
+            headers: { Authorization: 'Bearer ' + token },
+          })
+          .then((res) => {
+            const data = res.data.map((p) => ({ ...p, time: new Date(p.time).toLocaleString() }));
+            setPunches(data);
+          });
+        axios
+          .get('/api/pto', { headers: { Authorization: 'Bearer ' + token } })
+          .then((res) => setPto(res.data));
+        axios
+          .get('/api/tasks', { headers: { Authorization: 'Bearer ' + token } })
+          .then((res) => {
+            const data = res.data.map((t) => ({ ...t, time: new Date(t.time).toLocaleString() }));
+            setTasks(data);
+          });
+        axios
+          .get('/api/training', { headers: { Authorization: 'Bearer ' + token } })
+          .then((res) => setTraining(res.data));
       }, []);
 
       return (
@@ -190,11 +285,185 @@
             >
               Punch In/Out
             </button>
-            <h3 className="mt-4 font-semibold">Recent Punches</h3>
+          <h3 className="mt-4 font-semibold">Recent Punches</h3>
+          <ul>
+            {punches.map((punch) => (
+              <li key={punch.id}>
+                {punch.time} - {punch.type}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-6">
+            <h3 className="font-semibold mb-2">Request PTO</h3>
+            <div className="flex space-x-2 mb-2">
+              <input
+                type="date"
+                value={start}
+                onChange={(e) => setStart(e.target.value)}
+                className="p-2 border rounded"
+              />
+              <input
+                type="date"
+                value={end}
+                onChange={(e) => setEnd(e.target.value)}
+                className="p-2 border rounded"
+              />
+              <button
+                onClick={handleRequest}
+                className="bg-blue-500 text-white p-2 rounded"
+              >
+                Submit
+              </button>
+            </div>
+            <h4 className="font-semibold">My PTO Requests</h4>
             <ul>
-              {punches.map((punch) => (
-                <li key={punch.id}>
-                  {punch.time} - {punch.type}
+              {pto.map((r) => (
+                <li key={r.id}>
+                  {r.start} to {r.end} - {r.status}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="mt-6">
+            <h3 className="font-semibold mb-2">Switch Task</h3>
+            <div className="flex space-x-2 mb-2">
+              <input
+                type="text"
+                value={taskInput}
+                onChange={(e) => setTaskInput(e.target.value)}
+                className="p-2 border rounded"
+                placeholder="New task"
+              />
+              <button
+                onClick={handleTaskSwitch}
+                className="bg-blue-500 text-white p-2 rounded"
+              >
+                Switch
+              </button>
+            </div>
+            <h4 className="font-semibold">Task History</h4>
+            <ul>
+              {tasks.map((t) => (
+                <li key={t.id}>{t.time} - {t.task}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="mt-6">
+            <h3 className="font-semibold mb-2">Training</h3>
+            <ul>
+              {training.map((m) => (
+                <li key={m.id} className="mb-1">
+                  {m.name} - {m.completed ? 'Done' : 'Incomplete'}
+                  {!m.completed && (
+                    <button
+                      onClick={() => completeTraining(m.id)}
+                      className="ml-2 bg-green-500 text-white px-2 py-1 rounded"
+                    >
+                      Mark Complete
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
+      );
+    };
+
+    const ManagerDashboard = ({ user, setUser }) => {
+      const [punches, setPunches] = useState([]);
+      const [requests, setRequests] = useState([]);
+      const [tasks, setTasks] = useState([]);
+      const [training, setTraining] = useState([]);
+
+      const handleLogout = () => {
+        localStorage.removeItem('token');
+        setUser(null);
+      };
+
+      const updateStatus = (id, status) => {
+        const token = localStorage.getItem('token');
+        axios
+          .put(
+            `/api/manager/pto/${id}`,
+            { status },
+            { headers: { Authorization: 'Bearer ' + token } }
+          )
+          .then((res) => {
+            setRequests(requests.map((r) => (r.id === id ? res.data : r)));
+          });
+      };
+
+      useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        axios
+          .get('/api/manager/punches', { headers: { Authorization: 'Bearer ' + token } })
+          .then((res) => {
+            const data = res.data.map((p) => ({ ...p, time: new Date(p.time).toLocaleString() }));
+            setPunches(data);
+          });
+        axios
+          .get('/api/manager/pto', { headers: { Authorization: 'Bearer ' + token } })
+          .then((res) => setRequests(res.data));
+        axios
+          .get('/api/manager/tasks', { headers: { Authorization: 'Bearer ' + token } })
+          .then((res) => {
+            const data = res.data.map((t) => ({ ...t, time: new Date(t.time).toLocaleString() }));
+            setTasks(data);
+          });
+        axios
+          .get('/api/manager/training', { headers: { Authorization: 'Bearer ' + token } })
+          .then((res) => setTraining(res.data));
+      }, []);
+
+      return (
+        <div className="min-h-screen bg-gray-100 p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold">Manager Dashboard</h1>
+            <button onClick={handleLogout} className="bg-red-500 text-white p-2 rounded">Logout</button>
+          </div>
+          <div className="bg-white p-4 rounded shadow mb-4">
+            <h2 className="text-xl font-semibold mb-2">All Punches</h2>
+            <ul>
+              {punches.map((p) => (
+                <li key={p.id}>
+                  {p.pin}: {p.time} - {p.type}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="bg-white p-4 rounded shadow">
+            <h2 className="text-xl font-semibold mb-2">PTO Requests</h2>
+            <ul>
+              {requests.map((r) => (
+                <li key={r.id} className="mb-2">
+                  {r.pin}: {r.start} to {r.end} - {r.status}
+                  {r.status === 'pending' && (
+                    <span className="ml-2">
+                      <button className="bg-green-500 text-white px-2 py-1 mr-1 rounded" onClick={() => updateStatus(r.id, 'approved')}>Approve</button>
+                      <button className="bg-red-500 text-white px-2 py-1 rounded" onClick={() => updateStatus(r.id, 'rejected')}>Reject</button>
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="bg-white p-4 rounded shadow mt-4">
+            <h2 className="text-xl font-semibold mb-2">Task Logs</h2>
+            <ul>
+              {tasks.map((t) => (
+                <li key={t.id}>{t.pin}: {t.time} - {t.task}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="bg-white p-4 rounded shadow mt-4">
+            <h2 className="text-xl font-semibold mb-2">Training Status</h2>
+            <ul>
+              {training.map((t) => (
+                <li key={t.pin} className="mb-1">
+                  {t.pin}: {t.completedTraining.join(', ') || 'None'}
                 </li>
               ))}
             </ul>
