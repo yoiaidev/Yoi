@@ -69,8 +69,11 @@ app.get('/api/timeclock', auth, (req, res) => {
 });
 
 app.post('/api/timeclock/punch', auth, (req, res) => {
-  const punch = { id: Date.now(), time: new Date().toISOString(), type: 'in' };
-  req.user.punches.push(punch);
+  const punches = req.user.punches;
+  const last = punches[punches.length - 1];
+  const nextType = last && last.type === 'in' ? 'out' : 'in';
+  const punch = { id: Date.now(), time: new Date().toISOString(), type: nextType };
+  punches.push(punch);
   res.json(punch);
 });
 

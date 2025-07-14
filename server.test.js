@@ -22,19 +22,28 @@ describe('API', () => {
 
   test('punch and list punches', async () => {
     const token = '1234';
-    await request(app)
+    const first = await request(app)
       .post('/api/timeclock/punch')
       .set('Authorization', `Bearer ${token}`)
       .send();
+    expect(first.status).toBe(200);
+    expect(first.body.type).toBe('in');
+
+    const second = await request(app)
+      .post('/api/timeclock/punch')
+      .set('Authorization', `Bearer ${token}`)
+      .send();
+    expect(second.status).toBe(200);
+    expect(second.body.type).toBe('out');
+
     const res = await request(app)
       .get('/api/timeclock')
       .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBe(1);
-    expect(res.body[0]).toHaveProperty('id');
-    expect(res.body[0]).toHaveProperty('time');
+    expect(res.body.length).toBe(2);
     expect(res.body[0].type).toBe('in');
+    expect(res.body[1].type).toBe('out');
   });
 
   test('request PTO and view', async () => {
